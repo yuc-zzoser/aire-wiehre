@@ -14,6 +14,107 @@ try {
   localStorage.setItem('aireWheelInitFixed', '1');
  }
 } catch {}
+let historyByRoom = {};
+try { historyByRoom = JSON.parse(localStorage.getItem('aireHistory') || '{}') || {}; } catch {}
+function saveHistory() {
+ try { localStorage.setItem('aireHistory', JSON.stringify(historyByRoom)); } catch {}
+}
+function dewPoint(temp, rh) {
+ const gamma = Math.log(sat(temp) * rh / 611.2);
+ return 243.12 * gamma / (17.62 - gamma);
+}
+function localDateTime(timestamp) {
+ const date = new Date(timestamp);
+ const pad = value => String(value).padStart(2, '0');
+ return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
+function setupHistory(key, v) {
+ const entries = historyByRoom[key] ??= [];
+ const dateFormat = new Intl.DateTimeFormat('es-ES', {dateStyle:'short', timeStyle:'short'});
+ const numberFormat = new Intl.NumberFormat('es-ES', {maximumFractionDigits:1});
+ let editing = null;
+ function edit(entry) {
+  editing = entry;
+  v.historyForm.reset();
+  v.historyError.textContent = '';
+  v.historyStart.value = localDateTime(entry?.start ?? Date.now() - 300000);
+  v.historyEnd.value = localDateTime(entry?.end ?? Date.now());
+  v.afterTemp.value = entry?.after?.temp ?? '';
+  v.afterRh.value = entry?.after?.rh ?? '';
+  v.historyForm.hidden = false;
+  v.historyStart.focus();
+ }
+ function render() {
+  v.historyList.replaceChildren();
+  const active = sessions[key];
+  if (active?.startedAt) {
+   const item = document.createElement('li');
+   const status = Date.now() >= active.end ? 'Fin sin confirmar' : 'En curso';
+   item.textContent = dateFormat.format(active.startedAt) + ' · ' + status;
+   v.historyList.append(item);
+  }
+  for (const entry of [...entries].sort((a,b) => b.start - a.start)) {
+   const item = document.createElement('li');
+   const span = document.createElement('div');
+   const minutes = (entry.end - entry.start) / 60000;
+   span.textContent = dateFormat.format(entry.start) + ' → ' + dateFormat.format(entry.end) +
+    ' · ' + (minutes < 1 ? '<1' : Math.round(minutes)) + ' min';
+   item.append(span);
+   const readings = document.createElement('div');
+   readings.className = 'muted';
+   const formatReading = r => numberFormat.format(r.temp) + ' °C / ' + r.rh + ' %';
+   const parts = [];
+   if (entry.before) parts.push('Antes: ' + formatReading(entry.before));
+   if (entry.after) parts.push('Después: ' + formatReading(entry.after));
+   if (entry.before && entry.after) {
+    const delta = dewPoint(entry.after.temp, entry.after.rh) - dewPoint(entry.before.temp, entry.before.rh);
+    parts.push('Cambio del punto de rocío: ' + (delta >= 0.05 ? '+' : '') + numberFormat.format(Math.round(delta * 10) / 10 || 0) + ' °C');
+   }
+   readings.textContent = parts.join(' · ');
+   if (parts.length) item.append(readings);
+   const button = document.createElement('button');
+   button.type = 'button';
+   button.className = 'secondary';
+   button.textContent = 'Editar';
+   button.onclick = () => edit(entry);
+   item.append(button);
+   v.historyList.append(item);
+  }
+  if (!v.historyList.children.length) {
+   const item = document.createElement('li');
+   item.textContent = 'Aún no hay registros.';
+   v.historyList.append(item);
+  }
+ }
+ v.historyAdd.onclick = () => edit(null);
+ v.historyCancel.onclick = () => { v.historyForm.hidden = true; };
+ v.historyForm.onsubmit = event => {
+  event.preventDefault();
+  const start = editing && v.historyStart.value === localDateTime(editing.start)
+   ? editing.start : new Date(v.historyStart.value).getTime();
+  const end = editing && v.historyEnd.value === localDateTime(editing.end)
+   ? editing.end : new Date(v.historyEnd.value).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end > Date.now()) {
+   v.historyError.textContent = 'El fin debe ser posterior al inicio y no puede estar en el futuro.';
+   return;
+  }
+  if (Boolean(v.afterTemp.value) !== Boolean(v.afterRh.value)) {
+   v.historyError.textContent = 'Introduce ambas lecturas posteriores o deja las dos vacías.';
+   return;
+  }
+  const after = v.afterTemp.value ? {temp:Number(v.afterTemp.value), rh:Number(v.afterRh.value)} : null;
+  if (editing) Object.assign(editing, {start, end, after});
+  else entries.push({start, end, after});
+  saveHistory();
+  v.historyForm.hidden = true;
+  render();
+ };
+ v.renderHistory = render;
+ v.recordVentilation = entry => { entries.push(entry); saveHistory(); };
+ render();
+}
+
 function persist(){try{localStorage.setItem('aireRooms',JSON.stringify(saved));localStorage.setItem('aireSessions',JSON.stringify(sessions))}catch{}}
 function setOutside(t,h,label){outside={t,h,loaded:Date.now()};$('outT').textContent=t.toFixed(1);$('outH').textContent=Math.round(h);$('weatherStatus').textContent=label;for(const v of Object.values(views)){v.result.classList.add('hidden');v.minutes=0}}
 async function weather(){outside=null;$('outT').textContent='—';$('outH').textContent='—';$('weatherStatus').textContent='Consultando Open-Meteo…';$('refresh').disabled=true;try{const res=await fetch('https://api.open-meteo.com/v1/forecast?latitude=47.981&longitude=7.849&current=temperature_2m,relative_humidity_2m&timezone=Europe%2FBerlin',{signal:AbortSignal.timeout(12000)});if(!res.ok)throw Error();const data=await res.json(),c=data.current;if(!c||!Number.isFinite(c.temperature_2m)||!Number.isFinite(c.relative_humidity_2m)||c.relative_humidity_2m<1||c.relative_humidity_2m>100)throw Error();const stamp=c.time;const nowBerlin=new Date().toLocaleString('sv-SE',{timeZone:'Europe/Berlin'}).replace(' ','T');if(Math.abs(Date.parse(nowBerlin)-Date.parse(stamp))>2*3600000)throw Error();setOutside(c.temperature_2m,c.relative_humidity_2m,'Actualizado '+stamp.slice(11,16)+' · '+stamp.slice(0,10)+' (Freiburg)')}catch(e){$('weatherStatus').textContent='Sin datos recientes. Actualiza o introduce los datos a mano.'}finally{$('refresh').disabled=false}}
@@ -29,8 +130,7 @@ for(const [key,room] of Object.entries(rooms)){
  const session=document.createElement('div');session.className='session hidden';session.innerHTML='<strong>Ventilación en curso</strong><div class="timer" role="timer"></div><p class="muted">Mantén la página abierta para recibir el aviso.</p><button type="button" class="secondary">Terminar</button>';slide.append(session);
  const v={...elements,slide,session,minutes:0};views[key]=v;const data=saved[key]||{};for(const field of fields)v[field].value=data[field]??({temp:'19',rh:'65',mode:'single',target:'50'}[field]||'');
  const updateDew = () => {
-   const gamma = Math.log(sat(Number(v.temp.value)) * Number(v.rh.value) / 611.2);
-   const dew = 243.12 * gamma / (17.62 - gamma);
+   const dew = dewPoint(Number(v.temp.value), Number(v.rh.value));
    v.dew.textContent = 'Punto de rocío · ' + dew.toLocaleString('es-ES', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + ' °C';
  };
  const initializeWheels = [];
@@ -54,9 +154,34 @@ for(const [key,room] of Object.entries(rooms)){
  else if(eo>=goal){big='Ayuda parcial';title='Solo secará un poco';advice='Puedes reducir la humedad, pero no alcanzar el objetivo ahora.'}
  else{let rates={single:[4,10],cross:[10,25],tilt:[.5,2]}[v.mode.value];const known=+v.flow.value>0?+v.flow.value/room.volume:+v.ach.value;if(known>0)rates=[known,known];const factor=60*Math.log((ei-eo)/(goal-eo)),low=factor/rates[1],high=factor/rates[0];big=known?Math.ceil(high)+' min':Math.max(1,Math.ceil(low))+'–'+Math.max(1,Math.ceil(high))+' min';title='Puedes ventilar';v.minutes=Math.max(1,Math.min(10,Math.ceil(low)));advice='Para llegar a '+target+' % a '+t+' °C. Revisa en '+v.minutes+' min con el higrómetro.';if(high>15)advice+=' Si hace frío, cierra y vuelve a medir.';if(v.mode.value==='tilt')advice+=' Mejor abrir del todo un rato corto.'}
  elements.minutes.textContent=big;v.headline.textContent=title;v.advice.textContent=advice;v.comparison.textContent='Fuera, a '+t+' °C: ≈ '+equiv.toFixed(0)+' %. Dentro: '+h+' % · objetivo: '+target+' %.';v.timerArea.classList.toggle('hidden',!v.minutes);v.result.classList.remove('hidden');v.start.disabled=!!sessions[key];v.start.textContent=sessions[key]?'Ventilando':'Ventilar · revisar en '+v.minutes+' min';};
- v.start.onclick=()=>{if(!v.minutes||sessions[key])return;sessions[key]={end:Date.now()+v.minutes*60000,notified:false};persist();tick()};session.querySelector('button').onclick=()=>{delete sessions[key];persist();tick()};
+ v.start.onclick = () => {
+  if (!v.minutes || sessions[key]) return;
+  const startedAt = Date.now();
+  sessions[key] = {
+   startedAt,
+   end: startedAt + v.minutes * 60000,
+   notified: false,
+   before: {temp:Number(v.temp.value), rh:Number(v.rh.value)}
+  };
+  persist();
+  tick();
+  v.renderHistory();
+ };
+ session.querySelector('button').onclick = () => {
+  const active = sessions[key];
+  if (active?.startedAt) v.recordVentilation({
+   start: active.startedAt,
+   end: Math.max(Date.now(), active.startedAt + 1),
+   before: active.before
+  });
+  delete sessions[key];
+  persist();
+  tick();
+  v.renderHistory();
+ };
+ setupHistory(key, v);
  const nav=document.createElement('button');nav.type='button';nav.textContent=room.name;nav.onclick=()=>go(keys.indexOf(key));v.nav=nav;$('roomNav').append(nav);$('carousel').append(slide);
  for (const initialize of initializeWheels) initialize();
 }
-function tick(){let active=0;for(const [key,v] of Object.entries(views)){const s=sessions[key];v.session.classList.toggle('hidden',!s);v.start.disabled=!!s;if(!s)continue;active++;const remaining=Math.max(0,Math.ceil((s.end-Date.now())/1000));v.session.querySelector('.timer').textContent=remaining?Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0'):'Revisa el higrómetro';v.session.querySelector('strong').textContent=remaining?'Ventilando · '+rooms[key].name:'Revisión pendiente · '+rooms[key].name;if(!remaining&&!s.notified){s.notified=true;persist();if(navigator.vibrate)navigator.vibrate([200,100,200])}}$('activeTimers').textContent=active?active+' habitación'+(active===1?'':'es')+' con ventilación iniciada.':''}
+function tick(){let active=0;for(const [key,v] of Object.entries(views)){const s=sessions[key];v.session.classList.toggle('hidden',!s);v.start.disabled=!!s;if(!s)continue;active++;const remaining=Math.max(0,Math.ceil((s.end-Date.now())/1000));v.session.querySelector('.timer').textContent=remaining?Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0'):'Revisa el higrómetro';v.session.querySelector('strong').textContent=remaining?'Ventilando · '+rooms[key].name:'Revisión pendiente · '+rooms[key].name;if(!remaining&&!s.notified){s.notified=true;persist();v.renderHistory();if(navigator.vibrate)navigator.vibrate([200,100,200])}}$('activeTimers').textContent=active?active+' habitación'+(active===1?'':'es')+' con ventilación iniciada.':''}
 $('carousel').addEventListener('scroll',()=>{index=Math.round($('carousel').scrollLeft/($('carousel').clientWidth+16));for(const [i,key] of keys.entries())views[key].nav.setAttribute('aria-current',String(i===index))},{passive:true});views[keys[0]].nav.setAttribute('aria-current','true');document.addEventListener('visibilitychange',tick);setInterval(tick,1000);tick();weather();
