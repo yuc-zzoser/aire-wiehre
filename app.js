@@ -1,6 +1,19 @@
 const $=id=>document.getElementById(id);const sat=t=>6.112*Math.exp(17.62*t/(243.12+t));let outside=null;
 const rooms={salon:{name:'Salón',area:48,volume:120},principal:{name:'Dormitorio principal',area:30,volume:75},pequeno:{name:'Dormitorio pequeño',area:16,volume:40},cocina:{name:'Cocina',area:8,volume:20},bano:{name:'Baño',area:6,volume:15}};
 const fields=['temp','rh','mode','target','ach','flow'];let saved={},sessions={};try{saved=JSON.parse(localStorage.getItem('aireRooms')||'{}')||{};sessions=JSON.parse(localStorage.getItem('aireSessions')||'{}')||{}}catch{}const views={};
+// Earlier versions could save both wheel minima during initialization.
+try {
+ if (!localStorage.getItem('aireWheelInitFixed')) {
+  for (const room of Object.values(saved)) {
+   if (Number(room?.temp) === 5 && Number(room?.rh) === 1) {
+    room.temp = '19';
+    room.rh = '65';
+   }
+  }
+  localStorage.setItem('aireRooms', JSON.stringify(saved));
+  localStorage.setItem('aireWheelInitFixed', '1');
+ }
+} catch {}
 function persist(){try{localStorage.setItem('aireRooms',JSON.stringify(saved));localStorage.setItem('aireSessions',JSON.stringify(sessions))}catch{}}
 function setOutside(t,h,label){outside={t,h,loaded:Date.now()};$('outT').textContent=t.toFixed(1);$('outH').textContent=Math.round(h);$('weatherStatus').textContent=label;for(const v of Object.values(views)){v.result.classList.add('hidden');v.minutes=0}}
 async function weather(){outside=null;$('outT').textContent='—';$('outH').textContent='—';$('weatherStatus').textContent='Consultando Open-Meteo…';$('refresh').disabled=true;try{const res=await fetch('https://api.open-meteo.com/v1/forecast?latitude=47.981&longitude=7.849&current=temperature_2m,relative_humidity_2m&timezone=Europe%2FBerlin',{signal:AbortSignal.timeout(12000)});if(!res.ok)throw Error();const data=await res.json(),c=data.current;if(!c||!Number.isFinite(c.temperature_2m)||!Number.isFinite(c.relative_humidity_2m)||c.relative_humidity_2m<1||c.relative_humidity_2m>100)throw Error();const stamp=c.time;const nowBerlin=new Date().toLocaleString('sv-SE',{timeZone:'Europe/Berlin'}).replace(' ','T');if(Math.abs(Date.parse(nowBerlin)-Date.parse(stamp))>2*3600000)throw Error();setOutside(c.temperature_2m,c.relative_humidity_2m,'Actualizado '+stamp.slice(11,16)+' · '+stamp.slice(0,10)+' (Freiburg)')}catch(e){$('weatherStatus').textContent='Sin datos recientes. Actualiza o introduce los datos a mano.'}finally{$('refresh').disabled=false}}
@@ -20,6 +33,7 @@ for(const [key,room] of Object.entries(rooms)){
    const dew = 243.12 * gamma / (17.62 - gamma);
    v.dew.textContent = 'Punto de rocío · ' + dew.toLocaleString('es-ES', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + ' °C';
  };
+ const initializeWheels = [];
  for(const [field,min,max,unit] of [['temp',5,40,'°C'],['rh',1,100,'%']]){
  const input=v[field];if(input.value==='')input.value=field==='temp'?'19':'65';input.type='hidden';
  const wheel=document.createElement('div');wheel.className='wheel';wheel.tabIndex=0;wheel.setAttribute('role','spinbutton');wheel.setAttribute('aria-label',(field==='temp'?'Temperatura':'Humedad relativa')+' · '+room.name);wheel.setAttribute('aria-valuemin',min);wheel.setAttribute('aria-valuemax',max);
@@ -27,7 +41,10 @@ for(const [key,room] of Object.entries(rooms)){
  input.after(wheel);let selected=Math.max(min,Math.min(max,Math.round(+input.value)));input.value=selected;wheel.setAttribute('aria-valuenow',selected);
  const update=()=>{const number=Math.max(min,Math.min(max,min+Math.round(wheel.scrollTop/48)));wheel.setAttribute('aria-valuenow',number);for(const option of wheel.children)option.classList.toggle('chosen',+option.dataset.value===number);if(+input.value!==number){input.value=number;input.dispatchEvent(new Event('input',{bubbles:true}))}};
  wheel.addEventListener('scroll',update,{passive:true});wheel.addEventListener('keydown',event=>{if(['ArrowUp','ArrowDown','Home','End'].includes(event.key)){event.preventDefault();const next=event.key==='Home'?min:event.key==='End'?max:Math.max(min,Math.min(max,+input.value+(event.key==='ArrowUp'?-1:1)));wheel.scrollTo({top:(next-min)*48,behavior:'smooth'})}});
- requestAnimationFrame(()=>{wheel.scrollTop=(selected-min)*48;update()});
+ initializeWheels.push(() => {
+  wheel.children[selected-min].classList.add('chosen');
+  wheel.scrollTop = (selected-min)*48;
+ });
  }
  updateDew();
  v.form.addEventListener('input',()=>{updateDew();saved[key]=Object.fromEntries(fields.map(f=>[f,v[f].value]));persist();v.result.classList.add('hidden');v.minutes=0});
@@ -39,6 +56,7 @@ for(const [key,room] of Object.entries(rooms)){
  elements.minutes.textContent=big;v.headline.textContent=title;v.advice.textContent=advice;v.comparison.textContent='Fuera, a '+t+' °C: ≈ '+equiv.toFixed(0)+' %. Dentro: '+h+' % · objetivo: '+target+' %.';v.timerArea.classList.toggle('hidden',!v.minutes);v.result.classList.remove('hidden');v.start.disabled=!!sessions[key];v.start.textContent=sessions[key]?'Ventilando':'Ventilar · revisar en '+v.minutes+' min';};
  v.start.onclick=()=>{if(!v.minutes||sessions[key])return;sessions[key]={end:Date.now()+v.minutes*60000,notified:false};persist();tick()};session.querySelector('button').onclick=()=>{delete sessions[key];persist();tick()};
  const nav=document.createElement('button');nav.type='button';nav.textContent=room.name;nav.onclick=()=>go(keys.indexOf(key));v.nav=nav;$('roomNav').append(nav);$('carousel').append(slide);
+ for (const initialize of initializeWheels) initialize();
 }
 function tick(){let active=0;for(const [key,v] of Object.entries(views)){const s=sessions[key];v.session.classList.toggle('hidden',!s);v.start.disabled=!!s;if(!s)continue;active++;const remaining=Math.max(0,Math.ceil((s.end-Date.now())/1000));v.session.querySelector('.timer').textContent=remaining?Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0'):'Revisa el higrómetro';v.session.querySelector('strong').textContent=remaining?'Ventilando · '+rooms[key].name:'Revisión pendiente · '+rooms[key].name;if(!remaining&&!s.notified){s.notified=true;persist();if(navigator.vibrate)navigator.vibrate([200,100,200])}}$('activeTimers').textContent=active?active+' habitación'+(active===1?'':'es')+' con ventilación iniciada.':''}
 $('carousel').addEventListener('scroll',()=>{index=Math.round($('carousel').scrollLeft/($('carousel').clientWidth+16));for(const [i,key] of keys.entries())views[key].nav.setAttribute('aria-current',String(i===index))},{passive:true});views[keys[0]].nav.setAttribute('aria-current','true');document.addEventListener('visibilitychange',tick);setInterval(tick,1000);tick();weather();
