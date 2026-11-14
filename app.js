@@ -15,6 +15,11 @@ for(const [key,room] of Object.entries(rooms)){
  slide.querySelector('[data-room-name]').textContent=room.name;elements.roomInfo.textContent=room.area+' m² × 2,5 m = '+room.volume+' m³';elements.result.classList.add('result');elements.minutes.className='minutes';elements.timer.className='timer';elements.error.className='error';elements.result.removeAttribute('aria-live');
  const session=document.createElement('div');session.className='session hidden';session.innerHTML='<strong>Ventilación en curso</strong><div class="timer" role="timer"></div><p class="muted">Mantén la página abierta para recibir el aviso.</p><button type="button" class="secondary">Terminar</button>';slide.append(session);
  const v={...elements,slide,session,minutes:0};views[key]=v;const data=saved[key]||{};for(const field of fields)v[field].value=data[field]??({temp:'20',rh:'65',mode:'single',target:'50'}[field]||'');
+ const updateDew = () => {
+   const gamma = Math.log(sat(Number(v.temp.value)) * Number(v.rh.value) / 611.2);
+   const dew = 243.12 * gamma / (17.62 - gamma);
+   v.dew.textContent = 'Punto de rocío · ' + dew.toLocaleString('es-ES', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + ' °C';
+ };
  for(const [field,min,max,unit] of [['temp',5,40,'°C'],['rh',1,100,'%']]){
  const input=v[field];if(input.value==='')input.value=field==='temp'?'20':'65';input.type='hidden';
  const wheel=document.createElement('div');wheel.className='wheel';wheel.tabIndex=0;wheel.setAttribute('role','spinbutton');wheel.setAttribute('aria-label',(field==='temp'?'Temperatura':'Humedad relativa')+' · '+room.name);wheel.setAttribute('aria-valuemin',min);wheel.setAttribute('aria-valuemax',max);
@@ -24,7 +29,8 @@ for(const [key,room] of Object.entries(rooms)){
  wheel.addEventListener('scroll',update,{passive:true});wheel.addEventListener('keydown',event=>{if(['ArrowUp','ArrowDown','Home','End'].includes(event.key)){event.preventDefault();const next=event.key==='Home'?min:event.key==='End'?max:Math.max(min,Math.min(max,+input.value+(event.key==='ArrowUp'?-1:1)));wheel.scrollTo({top:(next-min)*48,behavior:'smooth'})}});
  requestAnimationFrame(()=>{wheel.scrollTop=(selected-min)*48;update()});
  }
- v.form.addEventListener('input',()=>{saved[key]=Object.fromEntries(fields.map(f=>[f,v[f].value]));persist();v.result.classList.add('hidden');v.minutes=0});
+ updateDew();
+ v.form.addEventListener('input',()=>{updateDew();saved[key]=Object.fromEntries(fields.map(f=>[f,v[f].value]));persist();v.result.classList.add('hidden');v.minutes=0});
  v.form.onsubmit=e=>{e.preventDefault();v.error.textContent='';if(!outside||Date.now()-outside.loaded>1800000){v.error.textContent='Actualiza el tiempo o introduce datos exteriores.';return}const t=+v.temp.value,h=+v.rh.value,target=+v.target.value,ei=sat(t)*h/100,eo=sat(outside.t)*outside.h/100,goal=sat(t)*target/100,equiv=100*eo/sat(t);let big,title,advice;v.minutes=0;
  if(h<=target){big='En objetivo';title='Humedad en objetivo';advice='No necesitas secar más. Ventila si el aire está cargado.'}
  else if(eo>=ei){big='Espera';title='Ahora no seca';advice='Fuera hay igual o más humedad. Espera o usa un deshumidificador.'}
