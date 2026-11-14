@@ -50,7 +50,7 @@ function setupHistory(key, v) {
   const active = sessions[key];
   if (active?.startedAt) {
    const item = document.createElement('li');
-   const status = Date.now() >= active.end ? 'Fin sin confirmar' : 'En curso';
+   const status = active.end !== null && Date.now() >= active.end ? 'Fin sin confirmar' : 'En curso';
    item.textContent = dateFormat.format(active.startedAt) + ' · ' + status;
    v.historyList.append(item);
   }
@@ -95,7 +95,7 @@ function setupHistory(key, v) {
    ? editing.start : new Date(v.historyStart.value).getTime();
   const end = editing && v.historyEnd.value === localDateTime(editing.end)
    ? editing.end : new Date(v.historyEnd.value).getTime();
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end > Date.now()) {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || (!editing && end === start) || end > Date.now()) {
    v.historyError.textContent = 'El fin debe ser posterior al inicio y no puede estar en el futuro.';
    return;
   }
@@ -155,33 +155,39 @@ for(const [key,room] of Object.entries(rooms)){
  else{let rates={single:[4,10],cross:[10,25],tilt:[.5,2]}[v.mode.value];const known=+v.flow.value>0?+v.flow.value/room.volume:+v.ach.value;if(known>0)rates=[known,known];const factor=60*Math.log((ei-eo)/(goal-eo)),low=factor/rates[1],high=factor/rates[0];big=known?Math.ceil(high)+' min':Math.max(1,Math.ceil(low))+'–'+Math.max(1,Math.ceil(high))+' min';title='Puedes ventilar';v.minutes=Math.max(1,Math.min(10,Math.ceil(low)));advice='Para llegar a '+target+' % a '+t+' °C. Revisa en '+v.minutes+' min con el higrómetro.';if(high>15)advice+=' Si hace frío, cierra y vuelve a medir.';if(v.mode.value==='tilt')advice+=' Mejor abrir del todo un rato corto.'}
  elements.minutes.textContent=big;v.headline.textContent=title;v.advice.textContent=advice;v.comparison.textContent='Fuera, a '+t+' °C: ≈ '+equiv.toFixed(0)+' %. Dentro: '+h+' % · objetivo: '+target+' %.';v.timerArea.classList.toggle('hidden',!v.minutes);v.result.classList.remove('hidden');v.start.disabled=!!sessions[key];v.start.textContent=sessions[key]?'Ventilando':'Ventilar · revisar en '+v.minutes+' min';};
  v.start.onclick = () => {
-  if (!v.minutes || sessions[key]) return;
+  startVentilation(v.minutes);
+ };
+ v.historyTrack.onclick = () => startVentilation(0);
+ function startVentilation(minutes) {
+  if (sessions[key]) return;
   const startedAt = Date.now();
   sessions[key] = {
    startedAt,
-   end: startedAt + v.minutes * 60000,
+   end: minutes ? startedAt + minutes * 60000 : null,
    notified: false,
    before: {temp:Number(v.temp.value), rh:Number(v.rh.value)}
   };
   persist();
   tick();
   v.renderHistory();
- };
+  session.scrollIntoView({block:'nearest', inline:'nearest'});
+ }
  session.querySelector('button').onclick = () => {
   const active = sessions[key];
   if (active?.startedAt) v.recordVentilation({
    start: active.startedAt,
-   end: Math.max(Date.now(), active.startedAt + 1),
+   end: Math.max(Date.now(), active.startedAt),
    before: active.before
   });
   delete sessions[key];
   persist();
   tick();
   v.renderHistory();
+  if (active?.startedAt) v.history.open = true;
  };
  setupHistory(key, v);
  const nav=document.createElement('button');nav.type='button';nav.textContent=room.name;nav.onclick=()=>go(keys.indexOf(key));v.nav=nav;$('roomNav').append(nav);$('carousel').append(slide);
  for (const initialize of initializeWheels) initialize();
 }
-function tick(){let active=0;for(const [key,v] of Object.entries(views)){const s=sessions[key];v.session.classList.toggle('hidden',!s);v.start.disabled=!!s;if(!s)continue;active++;const remaining=Math.max(0,Math.ceil((s.end-Date.now())/1000));v.session.querySelector('.timer').textContent=remaining?Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0'):'Revisa el higrómetro';v.session.querySelector('strong').textContent=remaining?'Ventilando · '+rooms[key].name:'Revisión pendiente · '+rooms[key].name;if(!remaining&&!s.notified){s.notified=true;persist();v.renderHistory();if(navigator.vibrate)navigator.vibrate([200,100,200])}}$('activeTimers').textContent=active?active+' habitación'+(active===1?'':'es')+' con ventilación iniciada.':''}
+function tick(){let active=0;for(const [key,v] of Object.entries(views)){const s=sessions[key];v.session.classList.toggle('hidden',!s);v.start.disabled=!!s;v.historyTrack.disabled=!!s;if(!s)continue;active++;if(s.end===null){v.session.querySelector('strong').textContent='Ventilando · '+rooms[key].name;v.session.querySelector('.timer').textContent='Apertura registrada';continue}const remaining=Math.max(0,Math.ceil((s.end-Date.now())/1000));v.session.querySelector('.timer').textContent=remaining?Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0'):'Revisa el higrómetro';v.session.querySelector('strong').textContent=remaining?'Ventilando · '+rooms[key].name:'Revisión pendiente · '+rooms[key].name;if(!remaining&&!s.notified){s.notified=true;persist();v.renderHistory();if(navigator.vibrate)navigator.vibrate([200,100,200])}}$('activeTimers').textContent=active?active+' habitación'+(active===1?'':'es')+' con ventilación iniciada.':''}
 $('carousel').addEventListener('scroll',()=>{index=Math.round($('carousel').scrollLeft/($('carousel').clientWidth+16));for(const [i,key] of keys.entries())views[key].nav.setAttribute('aria-current',String(i===index))},{passive:true});views[keys[0]].nav.setAttribute('aria-current','true');document.addEventListener('visibilitychange',tick);setInterval(tick,1000);tick();weather();
