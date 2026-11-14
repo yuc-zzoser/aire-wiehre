@@ -14,14 +14,14 @@ for(const [key,room] of Object.entries(rooms)){
  const elements={};for(const el of slide.querySelectorAll('[id]')){const original=el.id;elements[original]=el;el.id=key+'-'+original}for(const label of slide.querySelectorAll('label[for]'))label.htmlFor=key+'-'+label.htmlFor;
  slide.querySelector('[data-room-name]').textContent=room.name;elements.roomInfo.textContent=room.area+' m² × 2,5 m = '+room.volume+' m³';elements.result.classList.add('result');elements.minutes.className='minutes';elements.timer.className='timer';elements.error.className='error';elements.result.removeAttribute('aria-live');
  const session=document.createElement('div');session.className='session hidden';session.innerHTML='<strong>Ventilación en curso</strong><div class="timer" role="timer"></div><p class="muted">Mantén la página abierta para recibir el aviso.</p><button type="button" class="secondary">Terminar</button>';slide.append(session);
- const v={...elements,slide,session,minutes:0};views[key]=v;const data=saved[key]||{};for(const field of fields)v[field].value=data[field]??({temp:'20',rh:'65',mode:'single',target:'50'}[field]||'');
+ const v={...elements,slide,session,minutes:0};views[key]=v;const data=saved[key]||{};for(const field of fields)v[field].value=data[field]??({temp:'19',rh:'65',mode:'single',target:'50'}[field]||'');
  const updateDew = () => {
    const gamma = Math.log(sat(Number(v.temp.value)) * Number(v.rh.value) / 611.2);
    const dew = 243.12 * gamma / (17.62 - gamma);
    v.dew.textContent = 'Punto de rocío · ' + dew.toLocaleString('es-ES', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + ' °C';
  };
  for(const [field,min,max,unit] of [['temp',5,40,'°C'],['rh',1,100,'%']]){
- const input=v[field];if(input.value==='')input.value=field==='temp'?'20':'65';input.type='hidden';
+ const input=v[field];if(input.value==='')input.value=field==='temp'?'19':'65';input.type='hidden';
  const wheel=document.createElement('div');wheel.className='wheel';wheel.tabIndex=0;wheel.setAttribute('role','spinbutton');wheel.setAttribute('aria-label',(field==='temp'?'Temperatura':'Humedad relativa')+' · '+room.name);wheel.setAttribute('aria-valuemin',min);wheel.setAttribute('aria-valuemax',max);
  for(let number=min;number<=max;number++){const option=document.createElement('div');option.className='wheel-option';option.textContent=number+' '+unit;option.dataset.value=number;option.addEventListener('click',()=>wheel.scrollTo({top:(number-min)*48,behavior:'smooth'}));wheel.append(option)}
  input.after(wheel);let selected=Math.max(min,Math.min(max,Math.round(+input.value)));input.value=selected;wheel.setAttribute('aria-valuenow',selected);
