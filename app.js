@@ -158,7 +158,7 @@ for(const [key,room] of Object.entries(rooms)){
   startVentilation(v.minutes);
  };
  v.historyTrack.onclick = () => startVentilation(0);
- function startVentilation(minutes) {
+ function startVentilation(minutes, revealSession = true) {
   if (sessions[key]) return;
   const startedAt = Date.now();
   sessions[key] = {
@@ -170,9 +170,10 @@ for(const [key,room] of Object.entries(rooms)){
   persist();
   tick();
   v.renderHistory();
-  session.scrollIntoView({block:'nearest', inline:'nearest'});
+  if (revealSession) session.scrollIntoView({block:'nearest', inline:'nearest'});
  }
- session.querySelector('button').onclick = () => {
+ session.querySelector('button').onclick = () => finishVentilation(true);
+ function finishVentilation(revealHistory) {
   const active = sessions[key];
   if (active?.startedAt) v.recordVentilation({
    start: active.startedAt,
@@ -183,11 +184,58 @@ for(const [key,room] of Object.entries(rooms)){
   persist();
   tick();
   v.renderHistory();
-  if (active?.startedAt) v.history.open = true;
- };
+  if (active?.startedAt && revealHistory) v.history.open = true;
+ }
  setupHistory(key, v);
- const nav=document.createElement('button');nav.type='button';nav.textContent=room.name;nav.onclick=()=>go(keys.indexOf(key));v.nav=nav;$('roomNav').append(nav);$('carousel').append(slide);
+ const nav=document.createElement('button');nav.type='button';nav.textContent=room.name;nav.onclick=()=>go(keys.indexOf(key));v.nav=nav;
+ const shortcuts = document.createElement('div');
+ shortcuts.className = 'room-shortcuts';
+ const quick = document.createElement('button');
+ quick.type = 'button';
+ quick.className = 'quick-vent';
+ quick.onclick = () => {
+  if (sessions[key]) finishVentilation(false);
+  else startVentilation(outside && Date.now() - outside.loaded <= 1800000 ? v.minutes : 0, false);
+ };
+ v.quick = quick;
+ shortcuts.append(nav, quick);
+ $('roomNav').append(shortcuts);$('carousel').append(slide);
  for (const initialize of initializeWheels) initialize();
 }
-function tick(){let active=0;for(const [key,v] of Object.entries(views)){const s=sessions[key];v.session.classList.toggle('hidden',!s);v.start.disabled=!!s;v.historyTrack.disabled=!!s;if(!s)continue;active++;if(s.end===null){v.session.querySelector('strong').textContent='Ventilando · '+rooms[key].name;v.session.querySelector('.timer').textContent='Apertura registrada';continue}const remaining=Math.max(0,Math.ceil((s.end-Date.now())/1000));v.session.querySelector('.timer').textContent=remaining?Math.floor(remaining/60)+':'+String(remaining%60).padStart(2,'0'):'Revisa el higrómetro';v.session.querySelector('strong').textContent=remaining?'Ventilando · '+rooms[key].name:'Revisión pendiente · '+rooms[key].name;if(!remaining&&!s.notified){s.notified=true;persist();v.renderHistory();if(navigator.vibrate)navigator.vibrate([200,100,200])}}$('activeTimers').textContent=active?active+' habitación'+(active===1?'':'es')+' con ventilación iniciada.':''}
+function tick() {
+ let active = 0;
+ for (const [key, v] of Object.entries(views)) {
+  const session = sessions[key];
+  v.session.classList.toggle('hidden', !session);
+  v.start.disabled = Boolean(session);
+  v.historyTrack.disabled = Boolean(session);
+  let label = 'Ventilar';
+  let state = 'idle';
+  if (session) {
+   active++;
+   const countingDown = session.end !== null;
+   const seconds = countingDown
+    ? Math.max(0, Math.ceil((session.end - Date.now()) / 1000))
+    : Math.max(0, Math.floor((Date.now() - session.startedAt) / 1000));
+   const elapsed = Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+   const expired = countingDown && seconds === 0;
+   label = expired ? 'Revisar · Terminar' : elapsed + ' · Terminar';
+   state = expired ? 'expired' : 'active';
+   v.session.querySelector('.timer').textContent = expired ? 'Revisa el higrómetro' : elapsed;
+   v.session.querySelector('strong').textContent = (expired ? 'Revisión pendiente · ' : 'Ventilando · ') + rooms[key].name;
+   if (expired && !session.notified) {
+    session.notified = true;
+    persist();
+    v.renderHistory();
+    if (navigator.vibrate) navigator.vibrate([200,100,200]);
+   }
+  }
+  if (v.quick.textContent !== label) {
+   v.quick.textContent = label;
+   v.quick.setAttribute('aria-label', label + ' · ' + rooms[key].name);
+  }
+  v.quick.dataset.state = state;
+ }
+ $('activeTimers').textContent = active ? active + (active === 1 ? ' habitación ventilando' : ' habitaciones ventilando') : '';
+}
 $('carousel').addEventListener('scroll',()=>{index=Math.round($('carousel').scrollLeft/($('carousel').clientWidth+16));for(const [i,key] of keys.entries())views[key].nav.setAttribute('aria-current',String(i===index))},{passive:true});views[keys[0]].nav.setAttribute('aria-current','true');document.addEventListener('visibilitychange',tick);setInterval(tick,1000);tick();weather();
